@@ -56,7 +56,7 @@ jobs:
           curl -sS -X POST https://slack.com/api/chat.postMessage \
             -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
             -H 'Content-Type: application/json; charset=utf-8' \
-            -d "{\"channel\":\"C0BSRUPKCKC\",\"text\":\":warning: Météo feed partial: ${{ steps.build.outputs.count }} regions\"}" \
+            -d "{\"channel\":\"U08PW1PJ92L\",\"text\":\"🟡 Le flux météo est partiel — ${{ steps.build.outputs.count }} régions seulement, à vérifier.\n<https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|Voir le run>\"}" \
             > /dev/null
 
       - name: Alert if the meteo-feed job did not finish
