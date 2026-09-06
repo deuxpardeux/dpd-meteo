@@ -1,0 +1,71 @@
+name: Météo feed (hourly → latest.json)
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meteo-feed
+  cancel-in-progress: false
+
+jobs:
+  meteo-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the feed code (private deuxpardeux/dpd-tools, klaviyo/ only)
+        uses: actions/checkout@v4
+        with:
+          repository: deuxpardeux/dpd-tools
+          token: ${{ secrets.DPD_TOOLS_TOKEN }}
+          path: dpd-tools
+          sparse-checkout: klaviyo
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build meteo JSON
+        id: build
+        run: |
+          set +e
+          python dpd-tools/klaviyo/meteo_feed.py --out "$GITHUB_WORKSPACE/latest.json" | tee /tmp/build.log
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          count=$(sed -n 's/^PARTIAL \([0-9][0-9]*\/18\).*/\1/p' /tmp/build.log)
+          echo "count=${count:-18/18}" >> "$GITHUB_OUTPUT"
+          test "$code" -eq 0 -o "$code" -eq 2
+
+      - name: Publish latest.json
+        run: |
+          git config user.name "dpd-jobs" && git config user.email "jobs@deuxpardeux.com"
+          if git diff --quiet -- latest.json; then echo "unchanged"; else git add latest.json && git commit -m "meteo $(date -u +%Y-%m-%dT%H:%MZ)" && git push; fi
+
+      - name: Alert when partial
+        if: steps.build.outputs.code == '2'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            -d "{\"channel\":\"C0BSRUPKCKC\",\"text\":\":warning: Météo feed partial: ${{ steps.build.outputs.count }} regions\"}" \
+            > /dev/null
+
+      - name: Alert if the meteo-feed job did not finish
+        if: failure() || cancelled()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            -d "{\"channel\":\"C0BSRUPKCKC\",\"text\":\":warning: <@U08PW1PJ92L> Météo feed (dpd-meteo/meteo-feed.yml) did not finish — conclusion: ${{ job.status }}. Weather feed may be stale. Run log: <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|this run>.\"}" \
+            > /dev/null
