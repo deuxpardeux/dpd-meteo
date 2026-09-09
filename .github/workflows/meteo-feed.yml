@@ -36,7 +36,7 @@ jobs:
         id: build
         run: |
           set +e
-          python dpd-tools/klaviyo/meteo_feed.py --out "$GITHUB_WORKSPACE/latest.json" | tee /tmp/build.log
+          python dpd-tools/klaviyo/meteo_feed.py --out "$GITHUB_WORKSPACE/latest.json" --header "$GITHUB_WORKSPACE/header.json" | tee /tmp/build.log
           code=${PIPESTATUS[0]}
           echo "code=$code" >> "$GITHUB_OUTPUT"
           count=$(sed -n 's/^PARTIAL \([0-9][0-9]*\/18\).*/\1/p' /tmp/build.log)
@@ -46,7 +46,7 @@ jobs:
       - name: Publish latest.json
         run: |
           git config user.name "dpd-jobs" && git config user.email "jobs@deuxpardeux.com"
-          if git diff --quiet -- latest.json; then echo "unchanged"; else git add latest.json && git commit -m "meteo $(date -u +%Y-%m-%dT%H:%MZ)" && git push; fi
+          if git diff --quiet -- latest.json header.json && [ -z "$(git ls-files --others --exclude-standard header.json)" ]; then echo unchanged; else git add latest.json header.json && git commit -m "meteo $(date -u +%Y-%m-%dT%H:%MZ)" && git push; fi
 
       - name: Alert when partial
         if: steps.build.outputs.code == '2'
