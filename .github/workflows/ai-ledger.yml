@@ -1,0 +1,71 @@
+name: AI ledger checks
+# Same file in every repo (source: deuxpardeux/dpd-tools tools/ai_ledger/templates/ai-ledger.yml).
+# Warn-only: never fails a pull request. It
+# 1) warns when an AI pull request has no AI-Tool / AI-Model footer,
+# 2) warns on AI calls that bypass the LiteLLM gateway and prints the count,
+# 3) writes one ai-ledger event (tool, model, branch, PR, outcome) to the job summary
+#    and as an artifact; the hourly warehouse job reads PRs and runs from the API.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ai-ledger-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai-ledger:
+    name: AI ledger checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Footer, bypasses and ledger event
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          python .github/ai-ledger/bypass_lint.py . --warn | tail -n 60
+          python - <<'PY'
+          import json, os, re
+          body = os.environ.get("PR_BODY") or ""
+          tool = re.search(r"(?im)^\s*AI-Tool\s*:\s*(\S+)", body)
+          model = re.search(r"(?im)^\s*AI-Model\s*:\s*(\S+)", body)
+          author = (os.environ.get("PR_AUTHOR") or "").lower()
+          exempt = author in {"dependabot[bot]", "github-actions[bot]"}
+          if not exempt and (not tool or not model):
+              print("::warning::Add 'AI-Tool: <cursor|grok-bot|claude-code|claude-routine|codex|human|github-automation>' "
+                    "and 'AI-Model: <model or none>' lines to the PR body (see AGENTS.md).")
+          merged = os.environ.get("PR_MERGED") == "true"
+          action = os.environ.get("PR_ACTION")
+          outcome = "success" if merged else ("failed" if action == "closed" else "unknown")
+          event = {"surface": "github", "tool": tool.group(1).lower() if tool else "unknown",
+                   "model": model.group(1) if model else "unknown", "repo": os.environ["REPO"],
+                   "branch": os.environ.get("PR_BRANCH"), "pr_number": int(os.environ["PR_NUMBER"]),
+                   "commit_sha": os.environ.get("PR_SHA"), "task_kind": "pr",
+                   "task": (os.environ.get("PR_TITLE") or "")[:200], "outcome": outcome,
+                   "failure_reason": "closed_unmerged" if outcome == "failed" else None}
+          os.makedirs("ai-ledger", exist_ok=True)
+          open("ai-ledger/event.json", "w").write(json.dumps(event))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write("### AI ledger event\n\n```json\n" + json.dumps(event, indent=1) + "\n```\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-ledger-event
+          path: ai-ledger/event.json
+          retention-days: 30

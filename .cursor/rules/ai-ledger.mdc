@@ -1,0 +1,8 @@
+---
+description: AI ledger, PR footer, LiteLLM-only calls and the orchestration playbook
+alwaysApply: true
+---
+- Before starting, read the `active` lessons in `reports/orch_loop/lessons.json` (deuxpardeux/dpd-tools) that match your task and follow them.
+- End every PR body with `AI-Tool: cursor` and `AI-Model: <the exact model you ran on>` (never guess; `unknown` if you cannot tell). Add the same lines as commit trailers.
+- Call models only through the LiteLLM gateway; never add a direct provider SDK or HTTP call (the `AI ledger checks` job warns).
+- Open PRs as drafts with batched commits; mark ready only when finished.
